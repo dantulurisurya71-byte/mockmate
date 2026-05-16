@@ -85,11 +85,14 @@ async def transcribe_audio(file: UploadFile = File(...)):
         logging.info(f"Transcription complete: '{text[:80]}...' lang={language}")
         return TranscriptionResponse(text=text, language=language, duration=duration)
 
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        if e.status_code == 400:
+            raise
+        logging.error(f"Transcription HTTP error: {e.detail}")
+        return TranscriptionResponse(text="", language="en", duration=0.0)
     except Exception as e:
         logging.error(f"Transcription error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+        return TranscriptionResponse(text="", language="en", duration=0.0)
     finally:
         if temp_path:
             try:
