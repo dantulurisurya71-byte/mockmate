@@ -8,6 +8,7 @@ export const redisConnection = {
   port: parseInt(redisUrl.port || '6379', 10),
   username: redisUrl.username || undefined,
   password: redisUrl.password || undefined,
+  tls: redisUrl.protocol === 'rediss:' ? {} : undefined,
 };
 
 export const resumeQueue = new Queue('resume-analysis', { connection: redisConnection });
