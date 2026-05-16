@@ -1,9 +1,8 @@
 import { Worker, Job } from 'bullmq';
-import fs from 'fs';
-import path from 'path';
 import prisma from '../config/database';
 import { config } from '../config';
 import logger from '../config/logger';
+import { downloadFromSupabase } from '../config/supabaseStorage';
 import {
   resumeQueue,
   evaluationQueue,
@@ -39,12 +38,10 @@ const resumeWorker = new Worker('resume-analysis', async (job: Job) => {
     const resume = await prisma.resume.findUnique({ where: { id: job.data.resumeId } });
     if (!resume) throw new Error('Resume not found');
 
-    const filePath = path.resolve(config.upload.dir, path.basename(resume.fileUrl));
-    if (!fs.existsSync(filePath)) throw new Error('Resume file missing');
-
-    const fileBuffer = await fs.promises.readFile(filePath);
+    // Download file buffer from Supabase Storage (fileUrl is the Supabase public URL)
+    const fileBuffer = await downloadFromSupabase(resume.fileUrl);
     const formData = new FormData();
-    formData.append('file', new Blob([fileBuffer], { type: 'application/pdf' }), resume.fileName);
+    formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: 'application/pdf' }), resume.fileName);
 
     const response = await fetchWithTimeout(
       `${config.aiService.url}/api/resume/upload-analyze`,

@@ -37,6 +37,12 @@ export const config = {
     apiKey: process.env.GROQ_API_KEY || '',
   },
 
+  supabase: {
+    url: process.env.SUPABASE_URL || '',
+    serviceKey: process.env.SUPABASE_SERVICE_KEY || '',
+    bucket: process.env.SUPABASE_STORAGE_BUCKET || 'resumes',
+  },
+
   upload: {
     dir: process.env.UPLOAD_DIR || './uploads',
     maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760', 10),

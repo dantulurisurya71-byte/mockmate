@@ -1,43 +1,30 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
-import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { ResumeService } from '../services/resumeService';
 import { config } from '../config';
 import { validateParams } from '../middleware/validate';
-import fs from 'fs';
+import { supabase, BUCKET } from '../config/supabaseStorage';
 
 const router = Router();
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, config.upload.dir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
-  },
-});
-
+// Use memory storage — no local disk writes, buffer goes straight to Supabase
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: config.upload.maxFileSize },
-  fileFilter: (req, file, cb) => {
-    const allowed = ['.pdf'];
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) cb(null, true);
+  fileFilter: (_req, file, cb) => {
+    const ext = file.originalname.toLowerCase().split('.').pop();
+    if (ext === 'pdf') cb(null, true);
     else cb(new Error('Only PDF files are allowed'));
   },
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
-async function ensurePdfSignature(filePath: string) {
-  const fd = await fs.promises.open(filePath, 'r');
-  const buffer = Buffer.alloc(4);
-  await fd.read(buffer, 0, 4, 0);
-  await fd.close();
-  if (buffer.toString() !== '%PDF') {
+function ensurePdfSignature(buffer: Buffer): void {
+  if (buffer.length < 4 || buffer.slice(0, 4).toString() !== '%PDF') {
     throw new Error('Invalid PDF file');
   }
 }
@@ -49,9 +36,8 @@ router.post('/', authenticate, upload.single('resume'), async (req: AuthRequest,
       return res.status(403).json({ error: 'Candidate access required' });
     }
     try {
-      await ensurePdfSignature(req.file.path);
+      ensurePdfSignature(req.file.buffer);
     } catch (error: any) {
-      fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: error.message || 'Invalid PDF file' });
     }
     const resume = await ResumeService.upload(req.user!.id, req.file);
@@ -80,13 +66,28 @@ router.get('/:id', authenticate, validateParams(idParamSchema), async (req: Auth
   }
 });
 
+// Download: generate a short-lived signed URL from Supabase and redirect
 router.get('/:id/download', authenticate, validateParams(idParamSchema), async (req: AuthRequest, res: Response) => {
   try {
     const resume = await ResumeService.getByIdForUser(req.params.id as string, req.user!);
     if (!resume) return res.status(404).json({ error: 'Resume not found' });
-    const filePath = path.join(config.upload.dir, path.basename(resume.fileUrl));
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-    res.download(filePath, resume.fileName);
+
+    // Extract storage path from the public URL stored in DB
+    const marker = `/storage/v1/object/public/${BUCKET}/`;
+    const idx = resume.fileUrl.indexOf(marker);
+    const storagePath = idx !== -1
+      ? resume.fileUrl.substring(idx + marker.length)
+      : resume.fileUrl;
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET)
+      .createSignedUrl(storagePath, 60); // 60-second expiry
+
+    if (error || !data?.signedUrl) {
+      return res.status(404).json({ error: 'File not available' });
+    }
+
+    res.redirect(data.signedUrl);
   } catch (error: any) {
     res.status(error.status || 500).json({ error: error.message });
   }

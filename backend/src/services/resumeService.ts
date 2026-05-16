@@ -1,29 +1,32 @@
 import prisma from '../config/database';
 import logger from '../config/logger';
-import { config } from '../config';
-import fs from 'fs';
-import path from 'path';
+import { uploadToSupabase, deleteFromSupabase } from '../config/supabaseStorage';
 import { addResumeJob } from '../queues';
+import { v4 as uuidv4 } from 'uuid';
 
 type UserContext = { id: string; role: string };
 
 export class ResumeService {
   static async upload(userId: string, file: Express.Multer.File) {
+    // Upload buffer directly to Supabase Storage
+    const storageFileName = `${uuidv4()}.pdf`;
+    const publicUrl = await uploadToSupabase(file.buffer, storageFileName, 'application/pdf');
+
     const resume = await prisma.resume.create({
       data: {
         userId,
         fileName: file.originalname,
-        fileUrl: `/uploads/${file.filename}`,
+        fileUrl: publicUrl,        // Supabase public URL stored in DB
         fileSize: file.size,
       },
     });
 
-    logger.info({ resumeId: resume.id, userId }, 'Resume uploaded');
+    logger.info({ resumeId: resume.id, userId, storageFileName }, 'Resume uploaded to Supabase Storage');
 
     // Enqueue AI analysis via BullMQ (non-blocking, with retries)
     addResumeJob({
       resumeId: resume.id,
-      fileUrl: resume.fileUrl,
+      fileUrl: publicUrl,
       fileName: resume.fileName,
     }).catch(err => {
       logger.error({ error: err, resumeId: resume.id }, 'Failed to enqueue resume analysis');
@@ -54,11 +57,10 @@ export class ResumeService {
       throw Object.assign(new Error('Access denied'), { status: 403 });
     }
 
-    // Delete file from disk
-    const filePath = path.join(config.upload.dir, path.basename(resume.fileUrl));
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
+    // Delete from Supabase Storage (non-fatal if it fails — file may already be gone)
+    await deleteFromSupabase(resume.fileUrl).catch(err =>
+      logger.warn({ err, resumeId: id }, 'Could not delete file from Supabase Storage')
+    );
 
     await prisma.resume.delete({ where: { id } });
     logger.info({ resumeId: id }, 'Resume deleted');
@@ -73,13 +75,7 @@ export class ResumeService {
       throw Object.assign(new Error('Access denied'), { status: 403 });
     }
 
-    // Verify file exists before enqueueing
-    const filePath = path.join(config.upload.dir, path.basename(resume.fileUrl));
-    if (!fs.existsSync(filePath)) {
-      throw Object.assign(new Error('Resume file not found on disk'), { status: 404 });
-    }
-
-    // Enqueue via BullMQ
+    // Enqueue via BullMQ — file lives in Supabase, worker fetches it via URL
     await addResumeJob({
       resumeId: resume.id,
       fileUrl: resume.fileUrl,
