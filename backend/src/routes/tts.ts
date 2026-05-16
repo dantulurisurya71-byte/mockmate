@@ -22,7 +22,7 @@ router.post('/', authenticate, async (req: Request, res: Response): Promise<void
 
     const cachedAudio = await redisClient.getBuffer(cacheKey);
     if (cachedAudio) {
-      res.setHeader('Content-Type', 'audio/wav');
+      res.setHeader('Content-Type', 'audio/mpeg');
       res.send(cachedAudio);
       return;
     }
@@ -35,7 +35,7 @@ router.post('/', authenticate, async (req: Request, res: Response): Promise<void
     });
 
     if (!response.ok) {
-      throw new Error(`Piper TTS failed: ${response.statusText}`);
+      throw new Error(`TTS failed: ${response.statusText}`);
     }
 
     const arrayBuffer = await response.arrayBuffer();
@@ -44,7 +44,7 @@ router.post('/', authenticate, async (req: Request, res: Response): Promise<void
     // Cache in Redis for 24 hours
     await redisClient.set(cacheKey, buffer, 'EX', 86400);
 
-    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Content-Type', 'audio/mpeg');
     res.send(buffer);
   } catch (error) {
     logger.error({ error }, 'TTS generation failed');
