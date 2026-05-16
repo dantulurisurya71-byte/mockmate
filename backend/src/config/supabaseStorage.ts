@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import { config } from './index';
 import logger from './logger';
 
@@ -9,6 +10,9 @@ if (!config.supabase.url || !config.supabase.serviceKey) {
 const supabase = createClient(
   config.supabase.url || 'https://placeholder.supabase.co',
   config.supabase.serviceKey || 'placeholder',
+  {
+    realtime: { transport: ws as any },
+  }
 );
 
 const BUCKET = config.supabase.bucket;
